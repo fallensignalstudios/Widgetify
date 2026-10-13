@@ -102,6 +102,8 @@ void FFigmaCommonUIMapper::PrepareImport(FFigmaImportContext& Context)
 	{
 		PrepareButtonSet(*Instance, Context);
 	}
+	// Synthetic sets copy nodes that point into this import's bundle; nothing needs them once the assets exist.
+	SyntheticSets.Reset();
 }
 
 FString FFigmaCommonUIMapper::GetSetId(const FFigmaNode& Node)
@@ -538,10 +540,12 @@ bool FFigmaCommonUIMapper::AddLabelGraph(UWidgetBlueprint* Blueprint, FName Labe
 		Node->AllocateDefaultPins();
 	};
 
+	const bool bReusedEvent = EventNode != nullptr;
+	const bool bWasDisabled = EventNode && !EventNode->IsNodeEnabled();
 	if (EventNode)
 	{
 		EventNode->Modify();
-		if (!EventNode->IsNodeEnabled())
+		if (bWasDisabled)
 		{
 			EventNode->SetEnabledState(ENodeEnabledState::Enabled, false);
 		}
@@ -585,6 +589,19 @@ bool FFigmaCommonUIMapper::AddLabelGraph(UWidgetBlueprint* Blueprint, FName Labe
 	}
 	else
 	{
+		// Leave the graph as it was rather than with half-wired nodes.
+		for (UEdGraphNode* Node : { static_cast<UEdGraphNode*>(GetLabel), static_cast<UEdGraphNode*>(GetText), static_cast<UEdGraphNode*>(SetText) })
+		{
+			FBlueprintEditorUtils::RemoveNode(Blueprint, Node, /*bDontRecompile*/ true);
+		}
+		if (!bReusedEvent)
+		{
+			FBlueprintEditorUtils::RemoveNode(Blueprint, EventNode, /*bDontRecompile*/ true);
+		}
+		else if (bWasDisabled)
+		{
+			EventNode->SetEnabledState(ENodeEnabledState::Disabled, false);
+		}
 		Context.Log->Warning(FString::Printf(TEXT("%s: could not wire %s to the label automatically; connect PreConstruct > Set Text by hand."), *Blueprint->GetName(), *TextVariable.ToString()));
 	}
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);

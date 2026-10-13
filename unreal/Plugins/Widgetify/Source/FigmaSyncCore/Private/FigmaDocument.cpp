@@ -111,11 +111,11 @@ FString FFigmaNode::GetPath() const
 int32 FFigmaNode::CountDescendants() const
 {
 	int32 Count = 0;
-	for (const TSharedPtr<FFigmaNode>& Child : Children)
+	for (const TSharedPtr<FFigmaNode>& ChildNode : Children)
 	{
-		if (Child.IsValid())
+		if (ChildNode.IsValid())
 		{
-			Count += 1 + Child->CountDescendants();
+			Count += 1 + ChildNode->CountDescendants();
 		}
 	}
 	return Count;

@@ -10,6 +10,8 @@ namespace
 	using FJsonArray = TArray<TSharedPtr<FJsonValue>>;
 
 	constexpr int32 MaxDepth = 256;
+	/** JSON nesting allowed in figmasync.json: about two levels per layer, plus styles. */
+	constexpr int32 MaxJsonNesting = 1024;
 
 	FString Str(const FJsonObjectPtr& Object, const TCHAR* Key, const FString& Default = FString())
 	{
@@ -27,6 +29,58 @@ namespace
 	{
 		bool Value = false;
 		return Object.IsValid() && Object->TryGetBoolField(Key, Value) ? Value : Default;
+	}
+
+	/** The value as an object, or null. (FJsonValue::AsObject() returns an empty object, and logs, for non-objects.) */
+	FJsonObjectPtr AsObj(const TSharedPtr<FJsonValue>& Value)
+	{
+		const FJsonObjectPtr* Object = nullptr;
+		return Value.IsValid() && Value->TryGetObject(Object) && Object ? *Object : FJsonObjectPtr();
+	}
+
+	/**
+	 * Deepest {}/[] nesting outside strings. UE's JSON values are freed recursively, so absurd nesting (a corrupt or
+	 * hostile file) is rejected before parsing rather than overflowing the stack.
+	 */
+	int32 MeasureJsonNesting(const FString& Text)
+	{
+		int32 Depth = 0;
+		int32 Deepest = 0;
+		bool bInString = false;
+		bool bEscaped = false;
+		for (int32 Index = 0; Index < Text.Len(); ++Index)
+		{
+			const TCHAR Char = Text[Index];
+			if (bInString)
+			{
+				if (bEscaped)
+				{
+					bEscaped = false;
+				}
+				else if (Char == TEXT('\\'))
+				{
+					bEscaped = true;
+				}
+				else if (Char == TEXT('"'))
+				{
+					bInString = false;
+				}
+				continue;
+			}
+			if (Char == TEXT('"'))
+			{
+				bInString = true;
+			}
+			else if (Char == TEXT('{') || Char == TEXT('['))
+			{
+				Deepest = FMath::Max(Deepest, ++Depth);
+			}
+			else if (Char == TEXT('}') || Char == TEXT(']'))
+			{
+				--Depth;
+			}
+		}
+		return Deepest;
 	}
 
 	FJsonObjectPtr Obj(const FJsonObjectPtr& Object, const TCHAR* Key)
@@ -220,7 +274,7 @@ namespace
 		Paint.ScaleMode = Str(Object, TEXT("scaleMode"));
 		for (const TSharedPtr<FJsonValue>& StopValue : Arr(Object, TEXT("stops")))
 		{
-			const FJsonObjectPtr Stop = StopValue.IsValid() ? StopValue->AsObject() : nullptr;
+			const FJsonObjectPtr Stop = AsObj(StopValue);
 			if (Stop.IsValid())
 			{
 				FFigmaGradientStop& Out = Paint.Stops.AddDefaulted_GetRef();
@@ -235,7 +289,7 @@ namespace
 	{
 		for (const TSharedPtr<FJsonValue>& Value : Values)
 		{
-			const FJsonObjectPtr Object = Value.IsValid() ? Value->AsObject() : nullptr;
+			const FJsonObjectPtr Object = AsObj(Value);
 			if (Object.IsValid())
 			{
 				Out.Add(ParsePaint(Object));
@@ -289,7 +343,7 @@ namespace
 		Style.CornerSmoothing = Num(Object, TEXT("cornerSmoothing"));
 		for (const TSharedPtr<FJsonValue>& Value : Arr(Object, TEXT("effects")))
 		{
-			const FJsonObjectPtr Effect = Value.IsValid() ? Value->AsObject() : nullptr;
+			const FJsonObjectPtr Effect = AsObj(Value);
 			if (Effect.IsValid())
 			{
 				Style.Effects.Add(ParseEffect(Effect));
@@ -379,7 +433,7 @@ namespace
 		Text.bMixed = Bool(Object, TEXT("mixed"));
 		for (const TSharedPtr<FJsonValue>& Value : Arr(Object, TEXT("segments")))
 		{
-			const FJsonObjectPtr Segment = Value.IsValid() ? Value->AsObject() : nullptr;
+			const FJsonObjectPtr Segment = AsObj(Value);
 			if (!Segment.IsValid())
 			{
 				continue;
@@ -413,7 +467,7 @@ namespace
 		{
 			for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Properties->Values)
 			{
-				const FJsonObjectPtr Property = Pair.Value.IsValid() ? Pair.Value->AsObject() : nullptr;
+				const FJsonObjectPtr Property = AsObj(Pair.Value);
 				if (!Property.IsValid())
 				{
 					continue;
@@ -443,10 +497,18 @@ namespace
 		return Ref;
 	}
 
-	TSharedPtr<FFigmaNode> ParseNode(const FJsonObjectPtr& Object, FFigmaNode* Parent, int32 Depth)
+	TSharedPtr<FFigmaNode> ParseNode(const FJsonObjectPtr& Object, FFigmaNode* Parent, int32 Depth, TArray<FFigmaWarning>& OutWarnings)
 	{
-		if (!Object.IsValid() || Depth > MaxDepth)
+		if (!Object.IsValid())
 		{
+			return nullptr;
+		}
+		if (Depth > MaxDepth)
+		{
+			FFigmaWarning& Warning = OutWarnings.AddDefaulted_GetRef();
+			Warning.NodeId = Str(Object, TEXT("id"));
+			Warning.NodePath = Parent ? Parent->GetPath() : FString();
+			Warning.Message = FString::Printf(TEXT("Layers nested more than %d deep were skipped. Flatten the hierarchy or tag the group [img]."), MaxDepth);
 			return nullptr;
 		}
 
@@ -533,8 +595,8 @@ namespace
 			Node->bHasChildrenArray = true;
 			for (const TSharedPtr<FJsonValue>& Value : Arr(Object, TEXT("children")))
 			{
-				const FJsonObjectPtr ChildObject = Value.IsValid() ? Value->AsObject() : nullptr;
-				if (TSharedPtr<FFigmaNode> ChildNode = ParseNode(ChildObject, Node.Get(), Depth + 1))
+				const FJsonObjectPtr ChildObject = AsObj(Value);
+				if (TSharedPtr<FFigmaNode> ChildNode = ParseNode(ChildObject, Node.Get(), Depth + 1, OutWarnings))
 				{
 					Node->Children.Add(ChildNode);
 				}
@@ -547,6 +609,12 @@ namespace
 bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDocument, FString& OutError)
 {
 	OutDocument = FFigmaDocument();
+
+	if (MeasureJsonNesting(JsonText) > MaxJsonNesting)
+	{
+		OutError = FString::Printf(TEXT("figmasync.json is nested more than %d levels deep; it is corrupt or was not made by Widgetify."), MaxJsonNesting);
+		return false;
+	}
 
 	FJsonObjectPtr Root;
 	const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonText);
@@ -595,7 +663,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 		}
 	}
 
-	OutDocument.Root = ParseNode(Obj(Root, TEXT("root")), nullptr, 0);
+	OutDocument.Root = ParseNode(Obj(Root, TEXT("root")), nullptr, 0, OutDocument.Warnings);
 	if (!OutDocument.Root.IsValid())
 	{
 		OutError = TEXT("The bundle has no root node.");
@@ -614,7 +682,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 	{
 		for (const TPair<FString, TSharedPtr<FJsonValue>>& Pair : Components->Values)
 		{
-			const FJsonObjectPtr SetObject = Pair.Value.IsValid() ? Pair.Value->AsObject() : nullptr;
+			const FJsonObjectPtr SetObject = AsObj(Pair.Value);
 			if (!SetObject.IsValid())
 			{
 				continue;
@@ -633,7 +701,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 			}
 			for (const TSharedPtr<FJsonValue>& VariantValue : Arr(SetObject, TEXT("variants")))
 			{
-				const FJsonObjectPtr VariantObject = VariantValue.IsValid() ? VariantValue->AsObject() : nullptr;
+				const FJsonObjectPtr VariantObject = AsObj(VariantValue);
 				if (!VariantObject.IsValid())
 				{
 					continue;
@@ -642,7 +710,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 				Variant.Id = Str(VariantObject, TEXT("id"));
 				Variant.Name = Str(VariantObject, TEXT("name"));
 				StringMap(Obj(VariantObject, TEXT("properties")), Variant.Properties);
-				Variant.Node = ParseNode(Obj(VariantObject, TEXT("node")), nullptr, 0);
+				Variant.Node = ParseNode(Obj(VariantObject, TEXT("node")), nullptr, 0, OutDocument.Warnings);
 				if (Variant.Node.IsValid())
 				{
 					Set.Variants.Add(MoveTemp(Variant));
@@ -654,7 +722,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 
 	for (const TSharedPtr<FJsonValue>& Value : Arr(Root, TEXT("assets")))
 	{
-		const FJsonObjectPtr AssetObject = Value.IsValid() ? Value->AsObject() : nullptr;
+		const FJsonObjectPtr AssetObject = AsObj(Value);
 		if (!AssetObject.IsValid())
 		{
 			continue;
@@ -671,7 +739,7 @@ bool FFigmaDocumentParser::Parse(const FString& JsonText, FFigmaDocument& OutDoc
 
 	for (const TSharedPtr<FJsonValue>& Value : Arr(Root, TEXT("warnings")))
 	{
-		const FJsonObjectPtr WarningObject = Value.IsValid() ? Value->AsObject() : nullptr;
+		const FJsonObjectPtr WarningObject = AsObj(Value);
 		if (WarningObject.IsValid())
 		{
 			FFigmaWarning& Warning = OutDocument.Warnings.AddDefaulted_GetRef();

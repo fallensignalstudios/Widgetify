@@ -34,7 +34,7 @@ FString FFigmaNaming::SanitizeIdentifier(const FString& In, const FString& Fallb
 	}
 	if (Out.IsEmpty())
 	{
-		Out = Fallback;
+		Out = Fallback.IsEmpty() ? FString(TEXT("Widget")) : Fallback;
 	}
 	if (FChar::IsDigit(Out[0]))
 	{

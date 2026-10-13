@@ -11,11 +11,14 @@ namespace
 	constexpr int64 CentralHeaderSize = 46;
 	constexpr int64 LocalHeaderSize = 30;
 
-	const uint32* GetCrcTable()
+	/** Bundles hold a JSON file and PNGs; anything bigger is a corrupt or hostile archive (live push accepts uploads). */
+	constexpr uint32 MaxEntryBytes = 256u * 1024u * 1024u;
+
+	struct FCrcTable
 	{
-		static uint32 Table[256];
-		static bool bInitialized = false;
-		if (!bInitialized)
+		uint32 Entries[256];
+
+		FCrcTable()
 		{
 			for (uint32 N = 0; N < 256; ++N)
 			{
@@ -24,11 +27,15 @@ namespace
 				{
 					C = (C & 1u) ? (0xEDB88320u ^ (C >> 1)) : (C >> 1);
 				}
-				Table[N] = C;
+				Entries[N] = C;
 			}
-			bInitialized = true;
 		}
-		return Table;
+	};
+
+	const uint32* GetCrcTable()
+	{
+		static const FCrcTable Table; // Function-local static: initialized once, thread-safely.
+		return Table.Entries;
 	}
 }
 
@@ -183,6 +190,12 @@ bool FFigmaZipReader::Read(const FString& Path, TArray<uint8>& OutData, FString&
 	if (DataStart + static_cast<int64>(Entry.CompressedSize) > Bytes.Num())
 	{
 		OutError = FString::Printf(TEXT("Zip entry '%s' is truncated."), *Entry.Name);
+		return false;
+	}
+	// Also keeps the int32 casts below non-negative.
+	if (Entry.UncompressedSize > MaxEntryBytes || (Entry.Method == 0 && Entry.CompressedSize != Entry.UncompressedSize))
+	{
+		OutError = FString::Printf(TEXT("Zip entry '%s' has an invalid size (%u bytes)."), *Entry.Name, Entry.UncompressedSize);
 		return false;
 	}
 
