@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root {
+        --bg: var(--figma-color-bg, #ffffff);
+        --bg-2: var(--figma-color-bg-secondary, #f5f5f5);
+        --text: var(--figma-color-text, #1e1e1e);
+        --text-2: var(--figma-color-text-secondary, #6b6b6b);
+        --border: var(--figma-color-border, #e6e6e6);
+        --brand: var(--figma-color-bg-brand, #0d99ff);
+        --brand-text: var(--figma-color-text-onbrand, #ffffff);
+        --warn: var(--figma-color-text-warning, #b86200);
+        --danger: var(--figma-color-text-danger, #dc3412);
+        --ok: var(--figma-color-text-success, #14ae5c);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 12px/1.45 Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+        color: var(--text);
+        background: var(--bg);
+      }
+      .app { display: flex; flex-direction: column; gap: 12px; padding: 14px; height: 100vh; }
+      header { display: flex; align-items: baseline; gap: 8px; }
+      header .title { font-size: 14px; font-weight: 700; }
+      header .subtitle { color: var(--text-2); }
+      .card { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; background: var(--bg-2); }
+      .sel-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .sel-name.muted { font-weight: 400; color: var(--text-2); }
+      .sel-meta { color: var(--text-2); margin-top: 2px; }
+      .options { display: flex; flex-direction: column; gap: 8px; }
+      .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      .check { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+      select, input[type='text'] {
+        font: inherit; color: var(--text); background: var(--bg);
+        border: 1px solid var(--border); border-radius: 5px; padding: 4px 6px;
+      }
+      input[type='text'] { width: 100%; }
+      .stack { display: flex; flex-direction: column; gap: 4px; }
+      .hint { color: var(--text-2); font-size: 11px; }
+      button {
+        font: inherit; font-weight: 600; border-radius: 6px; padding: 8px 12px; cursor: pointer;
+        border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      }
+      button.primary { background: var(--brand); color: var(--brand-text); border-color: transparent; }
+      button:disabled { opacity: 0.45; cursor: default; }
+      .actions { display: flex; flex-direction: column; gap: 8px; }
+      .live { display: flex; align-items: center; gap: 8px; }
+      .live .status { flex: 1; color: var(--text-2); font-size: 11px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-2); opacity: 0.5; flex: none; }
+      .dot.on { background: var(--ok); opacity: 1; }
+      .progress .track { height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+      .progress .fill { height: 100%; width: 0; background: var(--brand); transition: width 120ms linear; }
+      .progress .label { color: var(--text-2); font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .log { flex: 1; min-height: 60px; overflow: auto; border-top: 1px solid var(--border); padding-top: 8px; }
+      .line { padding: 2px 0; word-break: break-word; }
+      .line.warn { color: var(--warn); }
+      .line.error { color: var(--danger); }
+      .line.ok { color: var(--ok); }
+      footer { color: var(--text-2); font-size: 11px; }
+      code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10.5px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header>
+        <span class="title">Widgetify</span>
+        <span class="subtitle">Figma → Unreal UMG</span>
+      </header>
+
+      <div class="card">
+        <div class="sel-name muted" id="selName">Loading…</div>
+        <div class="sel-meta" id="selMeta"></div>
+      </div>
+
+      <div class="options">
+        <div class="row">
+          <span>Image scale</span>
+          <select id="scale">
+            <option value="1">1x</option>
+            <option value="2">2x (recommended)</option>
+            <option value="3">3x</option>
+            <option value="4">4x</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" id="includeHidden" /> Export hidden layers (collapsed in Unreal)</label>
+        <label class="check"><input type="checkbox" id="rasterize" /> Rasterize gradients, shadows, masks</label>
+        <div class="stack">
+          <span>Button component prefixes</span>
+          <input type="text" id="prefixes" placeholder="Btn/, Button/" />
+          <span class="hint">Component sets with these prefixes export every variant, so Unreal can build hover/pressed/disabled styles.</span>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="primary" id="download" disabled>Export bundle (.zip)</button>
+        <div class="live">
+          <span class="dot" id="liveDot"></span>
+          <span class="status" id="liveStatus">Looking for Unreal…</span>
+          <button id="push" disabled>Push to Unreal</button>
+        </div>
+      </div>
+
+      <div class="progress" id="progress" hidden>
+        <div class="track"><div class="fill" id="bar"></div></div>
+        <div class="label" id="progressLabel"></div>
+      </div>
+
+      <div class="log" id="log"></div>
+
+      <footer>Layer tags: <code>[img]</code> <code>[skip]</code> <code>[focus]</code> <code>[action=Back]</code> · names like <code>Btn_Play</code>, <code>Txt_Title</code></footer>
+    </div>
+    <script>"use strict";(()=>{var _=Object.defineProperty,$=Object.defineProperties;var z=Object.getOwnPropertyDescriptors;var R=Object.getOwnPropertySymbols;var F=Object.prototype.hasOwnProperty,W=Object.prototype.propertyIsEnumerable;var w=(e,t,r)=>t in e?_(e,t,{enumerable:!0,configurable:!0,writable:!0,value:r}):e[t]=r,T=(e,t)=>{for(var r in t||(t={}))F.call(t,r)&&w(e,r,t[r]);if(R)for(var r of R(t))W.call(t,r)&&w(e,r,t[r]);return e},I=(e,t)=>$(e,z(t));var v="figmasync.json";var A={scale:2,includeHidden:!0,rasterizeUnsupported:!0,variantPrefixes:["Btn/","Button/"]},O=7820;var G=(()=>{let e=new Uint32Array(256);for(let t=0;t<256;t++){let r=t;for(let s=0;s<8;s++)r=r&1?3988292384^r>>>1:r>>>1;e[t]=r>>>0}return e})();function V(e){let t=4294967295;for(let r=0;r<e.length;r++)t=G[(t^e[r])&255]^t>>>8;return(t^4294967295)>>>0}function j(e){let t=Math.max(1980,e.getFullYear());return{time:e.getHours()<<11|e.getMinutes()<<5|Math.floor(e.getSeconds()/2),date:t-1980<<9|e.getMonth()+1<<5|e.getDate()}}function C(e,t=new Date){let r=new TextEncoder,s=j(t),l=new Set,u=e.map(a=>{let m=a.path.replace(/\\/g,"/").replace(/^\/+/,"");if(l.has(m))throw new Error(`Duplicate zip entry: ${m}`);return l.add(m),{name:r.encode(m),data:a.data,crc:V(a.data)}}),p=0,d=0;for(let a of u)p+=30+a.name.length+a.data.length,d+=46+a.name.length;if(p+d+22>4294967295||u.length>65535)throw new Error("Bundle is too large for a non-ZIP64 archive.");let E=new Uint8Array(p+d+22),o=new DataView(E.buffer),n=0,L=[];for(let a of u)L.push(n),o.setUint32(n,67324752,!0),o.setUint16(n+4,20,!0),o.setUint16(n+6,2048,!0),o.setUint16(n+8,0,!0),o.setUint16(n+10,s.time,!0),o.setUint16(n+12,s.date,!0),o.setUint32(n+14,a.crc,!0),o.setUint32(n+18,a.data.length,!0),o.setUint32(n+22,a.data.length,!0),o.setUint16(n+26,a.name.length,!0),o.setUint16(n+28,0,!0),E.set(a.name,n+30),E.set(a.data,n+30+a.name.length),n+=30+a.name.length+a.data.length;let S=n;return u.forEach((a,m)=>{o.setUint32(n,33639248,!0),o.setUint16(n+4,20,!0),o.setUint16(n+6,20,!0),o.setUint16(n+8,2048,!0),o.setUint16(n+10,0,!0),o.setUint16(n+12,s.time,!0),o.setUint16(n+14,s.date,!0),o.setUint32(n+16,a.crc,!0),o.setUint32(n+20,a.data.length,!0),o.setUint32(n+24,a.data.length,!0),o.setUint16(n+28,a.name.length,!0),o.setUint16(n+30,0,!0),o.setUint16(n+32,0,!0),o.setUint16(n+34,0,!0),o.setUint16(n+36,0,!0),o.setUint32(n+38,0,!0),o.setUint32(n+42,L[m],!0),E.set(a.name,n+46),n+=46+a.name.length}),o.setUint32(n,101010256,!0),o.setUint16(n+4,0,!0),o.setUint16(n+6,0,!0),o.setUint16(n+8,u.length,!0),o.setUint16(n+10,u.length,!0),o.setUint32(n+12,n-S,!0),o.setUint32(n+16,S,!0),o.setUint16(n+20,0,!0),E}var c=e=>document.getElementById(e),i={selName:c("selName"),selMeta:c("selMeta"),scale:c("scale"),includeHidden:c("includeHidden"),rasterize:c("rasterize"),prefixes:c("prefixes"),download:c("download"),push:c("push"),liveDot:c("liveDot"),liveStatus:c("liveStatus"),progress:c("progress"),bar:c("bar"),progressLabel:c("progressLabel"),log:c("log")},f={options:T({},A),livePort:O},h={ok:!1,reason:"Loading\u2026"},x=!1,b=!1;function y(e){parent.postMessage({pluginMessage:e},"*")}function H(){return{scale:Number(i.scale.value)||2,includeHidden:i.includeHidden.checked,rasterizeUnsupported:i.rasterize.checked,variantPrefixes:i.prefixes.value.split(",").map(e=>e.trim()).filter(e=>e.length>0)}}function X(e){i.scale.value=String(e.scale),i.includeHidden.checked=e.includeHidden,i.rasterize.checked=e.rasterizeUnsupported,i.prefixes.value=e.variantPrefixes.join(", ")}var M;function Z(){f=I(T({},f),{options:H()}),window.clearTimeout(M),M=window.setTimeout(()=>y({type:"save-prefs",prefs:f}),300)}function N(){i.download.disabled=x||!h.ok,i.push.disabled=x||!h.ok||!b}function D(e){var t,r,s;h=e,e.ok?(i.selName.textContent=(t=e.name)!=null?t:"",i.selMeta.textContent=`${e.width} \xD7 ${e.height} \xB7 ${e.layerCount}${((r=e.layerCount)!=null?r:0)>=5e3?"+":""} layers`,i.selName.classList.remove("muted")):(i.selName.textContent=(s=e.reason)!=null?s:"Nothing selected",i.selMeta.textContent="Tip: one top-level frame = one Widget Blueprint.",i.selName.classList.add("muted")),N()}function U(e,t=""){x=e,i.progress.hidden=!e,e&&(i.bar.style.width="0%",i.progressLabel.textContent=t),N()}function g(e,t="info"){let r=document.createElement("div");r.className=`line ${t}`,r.textContent=e,i.log.prepend(r)}function J(){i.log.textContent=""}function K(e){for(let t of e.slice().reverse())g(`${t.nodePath?`${t.nodePath}: `:""}${t.message}`,"warn")}function Y(e,t){let r=new Blob([e],{type:"application/zip"}),s=URL.createObjectURL(r),l=document.createElement("a");l.href=s,l.download=t,document.body.appendChild(l),l.click(),l.remove(),window.setTimeout(()=>URL.revokeObjectURL(s),1e4)}function k(e){return`http://127.0.0.1:${f.livePort}${e}`}async function q(e,t,r){let s=`?frame=${encodeURIComponent(t)}&id=${encodeURIComponent(r)}`,l=await fetch(k(`/figmasync/push${s}`),{method:"POST",headers:{"Content-Type":"application/octet-stream"},body:e}),u=await l.text();if(!l.ok)throw new Error(u||`HTTP ${l.status}`);let p="Sent to Unreal.";try{let d=JSON.parse(u);d.message&&(p=d.message)}catch(d){}g(p,"ok"),y({type:"notify",text:`Widgetify: ${p}`})}async function P(){let e=new AbortController,t=window.setTimeout(()=>e.abort(),1500);try{let r=await fetch(k("/figmasync/ping"),{signal:e.signal}),s=await r.json();b=r.ok,i.liveStatus.textContent=`Unreal connected${s.project?` \xB7 ${s.project}`:""}${s.engine?` (UE ${s.engine})`:""}`}catch(r){b=!1,i.liveStatus.textContent=`Unreal not detected on :${f.livePort} (enable Live Push in Figma Sync settings)`}finally{window.clearTimeout(t),i.liveDot.classList.toggle("on",b),N()}}function B(e){x||!h.ok||(J(),U(!0,"Walking layers\u2026"),y({type:"export",options:H(),purpose:e}))}window.onmessage=async e=>{let t=e.data.pluginMessage;if(t)switch(t.type){case"init":f=t.prefs,X(f.options),D(t.selection),P(),window.setInterval(()=>{P()},4e3);break;case"selection":D(t.selection);break;case"progress":i.bar.style.width=`${Math.round(t.done/Math.max(1,t.total)*100)}%`,i.progressLabel.textContent=t.label;break;case"bundle":{try{let r=new TextEncoder,s=C([{path:v,data:r.encode(t.json)},...t.files]),l=Math.round(s.length/1024);t.purpose==="download"?(Y(s,t.fileName),g(`Saved ${t.fileName} (${t.stats.nodes} layers, ${t.stats.images} images, ${l} KB).`,"ok")):await q(s,t.frameName,t.frameId),K(t.warnings),t.warnings.length===0&&g("No warnings. Everything mapped cleanly.","ok")}catch(r){g(`Export failed: ${r instanceof Error?r.message:String(r)}`,"error")}finally{U(!1)}break}case"export-error":g(t.message,"error"),U(!1);break}};for(let e of[i.scale,i.includeHidden,i.rasterize,i.prefixes])e.addEventListener("change",Z);i.download.addEventListener("click",()=>B("download"));i.push.addEventListener("click",()=>B("push"));y({type:"ready"});})();
+</script>
+  </body>
+</html>

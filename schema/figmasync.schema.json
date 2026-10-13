@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/fallensignalstudios/widgetify/schema/figmasync.schema.json",
+  "title": "figmasync bundle (version 1)",
+  "description": "figmasync.json, the document inside a Widgetify bundle. Lengths are Figma px (1 px = 1 Slate unit at the design resolution), colors are sRGB floats 0..1, angles are clockwise degrees about the box center. Source of truth: figma-plugin/src/shared/bundle.ts.",
+  "type": "object",
+  "required": ["format", "version", "generator", "exportedAt", "source", "options", "root", "components", "assets", "warnings"],
+  "properties": {
+    "format": { "const": "figmasync" },
+    "version": { "const": 1 },
+    "generator": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "exportedAt": { "type": "string", "description": "ISO 8601 timestamp." },
+    "source": {
+      "type": "object",
+      "required": ["fileName", "pageName", "frameId", "frameName"],
+      "properties": {
+        "fileName": { "type": "string" },
+        "pageName": { "type": "string" },
+        "frameId": { "type": "string", "description": "Figma node id of the exported frame; live push binds it to a Widget Blueprint." },
+        "frameName": { "type": "string" }
+      }
+    },
+    "options": {
+      "type": "object",
+      "required": ["scale", "includeHidden", "rasterizeUnsupported", "variantPrefixes"],
+      "properties": {
+        "scale": { "type": "number", "exclusiveMinimum": 0, "maximum": 8 },
+        "includeHidden": { "type": "boolean" },
+        "rasterizeUnsupported": { "type": "boolean" },
+        "variantPrefixes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "root": { "$ref": "#/$defs/node" },
+    "components": {
+      "type": "object",
+      "description": "Component sets (or virtual sets built from 'Btn/Primary/Hover' naming) whose variants were exported, keyed by id.",
+      "additionalProperties": { "$ref": "#/$defs/componentSet" }
+    },
+    "assets": { "type": "array", "items": { "$ref": "#/$defs/asset" } },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["message"],
+        "properties": {
+          "nodeId": { "type": "string" },
+          "nodePath": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "color": {
+      "type": "object",
+      "required": ["r", "g", "b", "a"],
+      "properties": {
+        "r": { "type": "number", "minimum": 0, "maximum": 1 },
+        "g": { "type": "number", "minimum": 0, "maximum": 1 },
+        "b": { "type": "number", "minimum": 0, "maximum": 1 },
+        "a": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "rect": {
+      "type": "object",
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" }
+      }
+    },
+    "constraint": { "enum": ["MIN", "MAX", "CENTER", "STRETCH", "SCALE"] },
+    "asset": {
+      "type": "object",
+      "required": ["id", "path", "width", "height", "scale", "hash", "bytes"],
+      "properties": {
+        "id": { "type": "string" },
+        "path": { "type": "string", "pattern": "^[^\\\\]+$", "description": "Bundle-relative, forward slashes, e.g. images/Frame_Border.png." },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "scale": { "type": "number", "exclusiveMinimum": 0, "description": "width / scale = size in Slate units." },
+        "hash": { "type": "string", "description": "Hex content hash, used to skip unchanged textures." },
+        "bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "rasterRef": {
+      "type": "object",
+      "required": ["asset", "bounds", "reason"],
+      "properties": {
+        "asset": { "type": "string", "description": "An assets[].id." },
+        "bounds": { "$ref": "#/$defs/rect", "description": "PNG placement relative to the node's layout box; may extend past it (shadows, outside strokes)." },
+        "reason": { "enum": ["tag", "vector", "effects", "gradient", "imageFill", "mask", "flip", "unsupported"] }
+      }
+    },
+    "paint": {
+      "type": "object",
+      "required": ["type", "visible", "opacity", "blendMode"],
+      "properties": {
+        "type": { "enum": ["SOLID", "GRADIENT_LINEAR", "GRADIENT_RADIAL", "GRADIENT_ANGULAR", "GRADIENT_DIAMOND", "IMAGE", "VIDEO", "PATTERN", "OTHER"] },
+        "visible": { "type": "boolean" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "blendMode": { "type": "string" },
+        "color": { "$ref": "#/$defs/color" },
+        "stops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["position", "color"],
+            "properties": {
+              "position": { "type": "number" },
+              "color": { "$ref": "#/$defs/color" }
+            }
+          }
+        },
+        "scaleMode": { "type": "string" }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "required": ["type", "visible", "radius"],
+      "properties": {
+        "type": { "enum": ["DROP_SHADOW", "INNER_SHADOW", "LAYER_BLUR", "BACKGROUND_BLUR", "OTHER"] },
+        "visible": { "type": "boolean" },
+        "radius": { "type": "number" },
+        "color": { "$ref": "#/$defs/color" },
+        "offset": {
+          "type": "object",
+          "required": ["x", "y"],
+          "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+        },
+        "spread": { "type": "number" }
+      }
+    },
+    "style": {
+      "type": "object",
+      "required": ["fills", "strokes", "strokeWeight", "strokeAlign", "dashed", "cornerRadius", "cornerSmoothing", "effects", "blendMode", "simple"],
+      "properties": {
+        "fills": { "type": "array", "items": { "$ref": "#/$defs/paint" } },
+        "strokes": { "type": "array", "items": { "$ref": "#/$defs/paint" } },
+        "strokeWeight": { "type": "number", "minimum": 0 },
+        "strokeWeights": {
+          "type": "object",
+          "description": "Present only when the four sides differ.",
+          "required": ["top", "right", "bottom", "left"],
+          "properties": {
+            "top": { "type": "number" },
+            "right": { "type": "number" },
+            "bottom": { "type": "number" },
+            "left": { "type": "number" }
+          }
+        },
+        "strokeAlign": { "enum": ["INSIDE", "OUTSIDE", "CENTER"] },
+        "dashed": { "type": "boolean" },
+        "cornerRadius": {
+          "type": "array",
+          "description": "Top-left, top-right, bottom-right, bottom-left (the Slate CornerRadii order).",
+          "items": { "type": "number", "minimum": 0 },
+          "minItems": 4,
+          "maxItems": 4
+        },
+        "cornerSmoothing": { "type": "number", "minimum": 0, "maximum": 1 },
+        "effects": { "type": "array", "items": { "$ref": "#/$defs/effect" } },
+        "blendMode": { "type": "string" },
+        "fillStyle": { "type": "string" },
+        "strokeStyle": { "type": "string" },
+        "effectStyle": { "type": "string" },
+        "simple": { "type": "boolean", "description": "Exactly expressible as one Slate rounded-box brush." }
+      }
+    },
+    "autoLayout": {
+      "type": "object",
+      "required": ["mode", "wrap", "padding", "itemSpacing", "counterAxisSpacing", "primaryAlign", "counterAlign", "reverseZIndex"],
+      "properties": {
+        "mode": { "enum": ["HORIZONTAL", "VERTICAL"] },
+        "wrap": { "type": "boolean" },
+        "padding": {
+          "type": "object",
+          "required": ["left", "right", "top", "bottom"],
+          "properties": {
+            "left": { "type": "number" },
+            "right": { "type": "number" },
+            "top": { "type": "number" },
+            "bottom": { "type": "number" }
+          }
+        },
+        "itemSpacing": { "type": "number" },
+        "counterAxisSpacing": { "type": "number" },
+        "primaryAlign": { "enum": ["MIN", "CENTER", "MAX", "SPACE_BETWEEN"] },
+        "counterAlign": { "enum": ["MIN", "CENTER", "MAX", "BASELINE"] },
+        "reverseZIndex": { "type": "boolean" }
+      }
+    },
+    "childLayout": {
+      "type": "object",
+      "required": ["positioning", "sizingH", "sizingV", "grow", "alignSelf"],
+      "properties": {
+        "positioning": { "enum": ["AUTO", "ABSOLUTE"] },
+        "sizingH": { "enum": ["FIXED", "HUG", "FILL"] },
+        "sizingV": { "enum": ["FIXED", "HUG", "FILL"] },
+        "grow": { "type": "number", "minimum": 0 },
+        "alignSelf": { "enum": ["INHERIT", "STRETCH"] }
+      }
+    },
+    "sizeLimits": {
+      "type": "object",
+      "properties": {
+        "minWidth": { "type": "number" },
+        "maxWidth": { "type": "number" },
+        "minHeight": { "type": "number" },
+        "maxHeight": { "type": "number" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "required": ["characters", "fontFamily", "fontStyle", "fontWeight", "italic", "fontSize", "color", "alignH", "alignV", "autoResize", "truncate", "maxLines", "letterSpacing", "lineHeight", "textCase", "decoration", "mixed"],
+      "properties": {
+        "characters": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "fontStyle": { "type": "string", "description": "Figma style name, e.g. \"SemiBold Italic\"." },
+        "fontWeight": { "type": "number" },
+        "italic": { "type": "boolean" },
+        "fontSize": { "type": "number", "exclusiveMinimum": 0, "description": "px; Unreal uses pt = px x 0.75." },
+        "color": { "$ref": "#/$defs/color", "description": "First visible solid fill, paint opacity folded into alpha." },
+        "alignH": { "enum": ["LEFT", "CENTER", "RIGHT", "JUSTIFIED"] },
+        "alignV": { "enum": ["TOP", "CENTER", "BOTTOM"] },
+        "autoResize": { "enum": ["NONE", "WIDTH_AND_HEIGHT", "HEIGHT", "TRUNCATE"] },
+        "truncate": { "type": "boolean" },
+        "maxLines": { "type": "integer", "minimum": 0, "description": "0 = unlimited." },
+        "letterSpacing": {
+          "type": "object",
+          "required": ["value", "unit"],
+          "properties": { "value": { "type": "number" }, "unit": { "enum": ["PIXELS", "PERCENT"] } }
+        },
+        "lineHeight": {
+          "type": "object",
+          "required": ["value", "unit"],
+          "properties": { "value": { "type": "number" }, "unit": { "enum": ["AUTO", "PIXELS", "PERCENT"] } }
+        },
+        "textCase": { "enum": ["ORIGINAL", "UPPER", "LOWER", "TITLE", "SMALL_CAPS", "SMALL_CAPS_FORCED"] },
+        "decoration": { "enum": ["NONE", "UNDERLINE", "STRIKETHROUGH"] },
+        "textStyle": { "type": "string" },
+        "stroke": {
+          "type": "object",
+          "required": ["color", "weight"],
+          "properties": { "color": { "$ref": "#/$defs/color" }, "weight": { "type": "number" } }
+        },
+        "shadow": {
+          "type": "object",
+          "required": ["color", "offset", "radius"],
+          "properties": {
+            "color": { "$ref": "#/$defs/color" },
+            "offset": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": { "x": { "type": "number" }, "y": { "type": "number" } }
+            },
+            "radius": { "type": "number" }
+          }
+        },
+        "mixed": { "type": "boolean", "description": "More than one styled run; the dominant run's style is used above." },
+        "segments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["start", "end", "characters", "fontFamily", "fontStyle", "fontWeight", "fontSize", "color"],
+            "properties": {
+              "start": { "type": "integer", "minimum": 0 },
+              "end": { "type": "integer", "minimum": 0 },
+              "characters": { "type": "string" },
+              "fontFamily": { "type": "string" },
+              "fontStyle": { "type": "string" },
+              "fontWeight": { "type": "number" },
+              "fontSize": { "type": "number" },
+              "color": { "$ref": "#/$defs/color" }
+            }
+          }
+        }
+      }
+    },
+    "componentRef": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["INSTANCE", "COMPONENT", "COMPONENT_SET"] },
+        "componentId": { "type": "string" },
+        "componentName": { "type": "string", "description": "For variants e.g. \"State=Hover\"; for plain components \"Btn/Primary/Hover\"." },
+        "componentSetId": { "type": "string" },
+        "componentSetName": { "type": "string" },
+        "variant": { "type": "object", "additionalProperties": { "type": "string" } },
+        "properties": {
+          "type": "object",
+          "description": "Instance component properties, \"#id\" suffixes stripped.",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type", "value"],
+            "properties": {
+              "type": { "type": "string" },
+              "value": { "type": ["string", "boolean"] }
+            }
+          }
+        },
+        "remote": { "type": "boolean" }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "name", "cleanName", "tags", "type", "visible", "opacity", "rotation", "x", "y", "width", "height"],
+      "properties": {
+        "id": { "type": "string", "description": "Figma node id; the key for re-sync." },
+        "name": { "type": "string", "description": "Raw layer name, tags included." },
+        "cleanName": { "type": "string", "description": "Layer name without [tags]; drives the widget name." },
+        "tags": { "type": "object", "description": "Parsed [tags], lower-case keys.", "additionalProperties": { "type": "string" } },
+        "type": { "enum": ["FRAME", "GROUP", "COMPONENT", "COMPONENT_SET", "INSTANCE", "SECTION", "RECTANGLE", "ELLIPSE", "LINE", "TEXT", "VECTOR", "STAR", "POLYGON", "BOOLEAN_OPERATION", "OTHER"] },
+        "visible": { "type": "boolean" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "rotation": { "type": "number", "description": "Degrees, clockwise, about the box center." },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "minimum": 0 },
+        "height": { "type": "number", "minimum": 0 },
+        "constraints": {
+          "type": "object",
+          "description": "Present when the parent is not auto-layout (or this child is absolutely positioned).",
+          "required": ["horizontal", "vertical"],
+          "properties": {
+            "horizontal": { "$ref": "#/$defs/constraint" },
+            "vertical": { "$ref": "#/$defs/constraint" }
+          }
+        },
+        "layout": { "$ref": "#/$defs/autoLayout" },
+        "child": { "$ref": "#/$defs/childLayout" },
+        "sizeLimits": { "$ref": "#/$defs/sizeLimits" },
+        "clipsContent": { "type": "boolean" },
+        "style": { "$ref": "#/$defs/style" },
+        "text": { "$ref": "#/$defs/text" },
+        "component": { "$ref": "#/$defs/componentRef" },
+        "image": { "$ref": "#/$defs/rasterRef", "description": "The node and its subtree were rasterized to one PNG; children are omitted." },
+        "background": { "$ref": "#/$defs/rasterRef", "description": "Only the container's own paint was rasterized; children follow normally." },
+        "propRefs": { "type": "object", "additionalProperties": { "type": "string" } },
+        "isMask": { "type": "boolean" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/node" } }
+      }
+    },
+    "componentSet": {
+      "type": "object",
+      "required": ["id", "name", "remote", "propertyNames", "variants"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "description": "e.g. \"Btn/Primary\"." },
+        "remote": { "type": "boolean" },
+        "propertyNames": { "type": "array", "items": { "type": "string" } },
+        "variants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "properties", "node"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "properties": { "type": "object", "additionalProperties": { "type": "string" } },
+              "node": { "$ref": "#/$defs/node" }
+            }
+          }
+        }
+      }
+    }
+  }
+}
