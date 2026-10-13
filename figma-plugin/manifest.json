@@ -1,0 +1,14 @@
+{
+  "name": "Widgetify (Figma → UMG)",
+  "id": "widgetify-figma-umg-sync",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["none"],
+    "devAllowedDomains": ["http://localhost:7820", "http://127.0.0.1:7820"],
+    "reasoning": "Optional live push of the exported bundle to the Unreal Editor running on this machine."
+  }
+}

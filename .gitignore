@@ -1,0 +1,18 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Unreal (when the plugin sits inside a project checkout)
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+*.sln
+*.VC.db
+.vs/
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
