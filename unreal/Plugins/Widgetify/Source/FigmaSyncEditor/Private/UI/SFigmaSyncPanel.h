@@ -68,6 +68,8 @@ private:
 	FReply OnOpenSettings();
 	bool HasBundle() const;
 	bool HasResyncTarget() const;
+	/** The preview context keeps a raw preset pointer; drop it when the preset was deleted since it was picked. */
+	void RefreshPreviewPreset();
 	FText GetImportButtonText() const;
 
 	// Preview tree

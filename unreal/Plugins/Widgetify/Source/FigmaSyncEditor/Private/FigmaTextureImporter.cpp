@@ -90,15 +90,31 @@ UTexture2D* FFigmaTextureImporter::GetOrImport(const FFigmaAsset& Asset, FName P
 		return nullptr;
 	}
 
+	// Different images can sanitize to the same name ("Icon-Back" / "Icon_Back"): the first one in the bundle keeps it.
+	auto IsClaimedByOther = [this, &Folder, &Asset](const FString& Candidate)
+	{
+		const FString* Owner = ClaimedNames.Find(Folder / Candidate);
+		return Owner && *Owner != Asset.Id;
+	};
 	const FString BaseName = FFigmaNaming::SanitizeIdentifier(FPaths::GetBaseFilename(Asset.Path), TEXT("Image"));
-	FString AssetName = Context.Settings.TexturePrefix + BaseName;
+	FString AssetName = FFigmaNaming::MakeUnique(Context.Settings.TexturePrefix + BaseName, IsClaimedByOther);
 
 	UTexture2D* Existing = Cast<UTexture2D>(FFigmaAssetUtils::FindAsset(Folder, AssetName, UTexture2D::StaticClass()));
 	if (!Existing && FFigmaAssetUtils::DoesAssetExist(Folder, AssetName))
 	{
-		// Something that isn't a texture already uses the name.
-		AssetName = FFigmaAssetUtils::MakeUniqueAssetName(Folder, AssetName);
+		// Something that isn't a texture already uses the name: take the first free name, or the texture a previous
+		// sync made there, so re-syncs don't pile up copies.
+		AssetName = FFigmaNaming::MakeUnique(AssetName, [&](const FString& Candidate)
+		{
+			if (IsClaimedByOther(Candidate))
+			{
+				return true;
+			}
+			Existing = Cast<UTexture2D>(FFigmaAssetUtils::FindAsset(Folder, Candidate, UTexture2D::StaticClass()));
+			return !Existing && FFigmaAssetUtils::DoesAssetExist(Folder, Candidate);
+		});
 	}
+	ClaimedNames.Add(Folder / AssetName, Asset.Id);
 
 	const FMD5Hash Hash = HashBytes(PngBytes);
 	if (Existing && GetStoredHash(Existing) == Hash)

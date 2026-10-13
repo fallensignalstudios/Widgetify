@@ -561,7 +561,7 @@ FText SFigmaSyncPanel::GetSourceInfoText() const
 	}
 	const FFigmaDocument& Document = Bundle->GetDocument();
 	const FFigmaNode& Root = *Document.Root;
-	return FText::Format(LOCTEXT("SourceInfo", "{0}  ·  {1}×{2}  ·  {3} layers  ·  {4} images  ·  from \"{5} / {6}\"  ·  exported {7}"),
+	return FText::Format(LOCTEXT("SourceInfo", "{0}  |  {1}x{2}  |  {3} layers  |  {4} images  |  from \"{5} / {6}\"  |  exported {7}"),
 		FText::FromString(Document.FrameName), FText::AsNumber(FMath::RoundToInt(Root.Width)), FText::AsNumber(FMath::RoundToInt(Root.Height)),
 		FText::AsNumber(Document.CountNodes()), FText::AsNumber(Document.Assets.Num()), FText::FromString(Document.FileName),
 		FText::FromString(Document.PageName), FText::FromString(Document.ExportedAt.Left(16).Replace(TEXT("T"), TEXT(" "))));
@@ -626,6 +626,14 @@ void SFigmaSyncPanel::OnParentClassChanged(const UClass* NewClass)
 FString SFigmaSyncPanel::GetPresetPath() const
 {
 	return Preset.IsValid() ? Preset->GetPathName() : FString();
+}
+
+void SFigmaSyncPanel::RefreshPreviewPreset()
+{
+	if (PreviewContext.IsValid() && PreviewContext->Preset != Preset.Get())
+	{
+		PreviewContext->SetPreset(Preset.Get());
+	}
 }
 
 void SFigmaSyncPanel::OnPresetChanged(const FAssetData& Asset)
@@ -732,6 +740,7 @@ FReply SFigmaSyncPanel::OnSaveLookAsPreset()
 	{
 		return FReply::Handled();
 	}
+	RefreshPreviewPreset();
 	UFigmaSyncStylePreset* NewPreset = CaptureLook(Bundle->GetDocument(), *PreviewContext);
 	if (NewPreset)
 	{
@@ -788,6 +797,7 @@ void SFigmaSyncPanel::Notify(const FText& Message, bool bSuccess) const
 
 TSharedRef<ITableRow> SFigmaSyncPanel::OnGenerateNodeRow(TSharedPtr<FFigmaNode> Node, const TSharedRef<STableViewBase>& OwnerTable)
 {
+	RefreshPreviewPreset();
 	const FString Mapping = PreviewContext.IsValid() && Node.IsValid() ? FFigmaWidgetBuilder::Describe(*Node, *PreviewContext) : FString();
 	return SNew(STableRow<TSharedPtr<FFigmaNode>>, OwnerTable)
 		.ToolTipText(FText::FromString(Node.IsValid() ? Node->GetPath() : FString()))

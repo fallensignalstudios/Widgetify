@@ -14,6 +14,7 @@
 #include "Components/Image.h"
 #include "Components/Overlay.h"
 #include "Components/OverlaySlot.h"
+#include "Components/PanelSlot.h"
 #include "Components/PanelWidget.h"
 #include "Components/SizeBox.h"
 #include "Components/SizeBoxSlot.h"
@@ -141,12 +142,32 @@ namespace
 
 	int32 DepthOf(const UWidget* Widget)
 	{
+		// Capped: a hand-edited hierarchy can be transiently cyclic mid-sync.
+		constexpr int32 MaxDepth = 1024;
 		int32 Depth = 0;
-		for (const UWidget* Current = Widget; Current && Current->GetParent(); Current = Current->GetParent())
+		for (const UWidget* Current = Widget; Current && Current->GetParent() && Depth < MaxDepth; Current = Current->GetParent())
 		{
 			++Depth;
 		}
 		return Depth;
+	}
+
+	/** Records everything a re-parent touches (the child, its old slot and old parent) so undo restores it. */
+	void ModifyForReparent(UWidget* Child)
+	{
+		if (!Child)
+		{
+			return;
+		}
+		Child->Modify();
+		if (UPanelSlot* OldSlot = Child->Slot)
+		{
+			OldSlot->Modify();
+			if (UPanelWidget* OldParent = OldSlot->Parent)
+			{
+				OldParent->Modify();
+			}
+		}
 	}
 
 	FString ClassDisplayName(const UClass* Class)
@@ -173,15 +194,15 @@ FFigmaWidgetBuilder::FFigmaWidgetBuilder(FFigmaImportContext& InContext, UWidget
 // ----------------------------------------------------------------------------------------------------------------
 // Classification and planning
 
-EFigmaWidgetKind FFigmaWidgetBuilder::Classify(const FFigmaNode& Node, FFigmaImportContext& Context, UClass** OutLeafClass, IFigmaWidgetMapper** OutMapper)
+EFigmaWidgetKind FFigmaWidgetBuilder::Classify(const FFigmaNode& Node, FFigmaImportContext& InContext, UClass** OutLeafClass, IFigmaWidgetMapper** OutMapper)
 {
 	if (Node.IsRasterized())
 	{
 		return EFigmaWidgetKind::Image;
 	}
-	for (const TSharedRef<IFigmaWidgetMapper>& Mapper : Context.Mappers)
+	for (const TSharedRef<IFigmaWidgetMapper>& Mapper : InContext.Mappers)
 	{
-		if (UClass* LeafClass = Mapper->ChooseLeafClass(Node, Context))
+		if (UClass* LeafClass = Mapper->ChooseLeafClass(Node, InContext))
 		{
 			if (OutLeafClass)
 			{
@@ -198,7 +219,7 @@ EFigmaWidgetKind FFigmaWidgetBuilder::Classify(const FFigmaNode& Node, FFigmaImp
 	{
 		return EFigmaWidgetKind::Text;
 	}
-	if (Context.IsButtonNode(Node))
+	if (InContext.IsButtonNode(Node))
 	{
 		return EFigmaWidgetKind::Button;
 	}
@@ -405,9 +426,9 @@ FFigmaWidgetBuilder::FLocks FFigmaWidgetBuilder::GetLocks(const FFigmaSyncNodeRe
 	return Locks;
 }
 
-FString FFigmaWidgetBuilder::Describe(const FFigmaNode& Node, FFigmaImportContext& Context)
+FString FFigmaWidgetBuilder::Describe(const FFigmaNode& Node, FFigmaImportContext& InContext)
 {
-	FFigmaWidgetBuilder Planner(Context, nullptr, nullptr);
+	FFigmaWidgetBuilder Planner(InContext, nullptr, nullptr);
 	FParentInfo Parent;
 	if (Node.Parent)
 	{
@@ -466,10 +487,13 @@ bool FFigmaWidgetBuilder::Build(const FFigmaNode& Root)
 	}
 
 	ManagedBefore = State ? State->GetManagedWidgetNames() : TSet<FName>();
+	TSet<FString> CurrentIds;
+	CollectIds(Root, CurrentIds);
+	// BuildNode, BuildContainer and BuildChildren hold FFigmaSyncNodeRecord& into NewRecords while recursing into
+	// children, which add records. One slot per node up front means those adds never reallocate under them.
+	NewRecords.Reserve(CurrentIds.Num());
 	if (State)
 	{
-		TSet<FString> CurrentIds;
-		CollectIds(Root, CurrentIds);
 		for (const TPair<FString, FFigmaSyncNodeRecord>& Pair : State->Nodes)
 		{
 			if (!CurrentIds.Contains(Pair.Key))
@@ -500,6 +524,7 @@ bool FFigmaWidgetBuilder::Build(const FFigmaNode& Root)
 	{
 		if (CurrentRoot != RootOuter)
 		{
+			ModifyForReparent(RootOuter);
 			RootOuter->RemoveFromParent();
 			Tree->RootWidget = RootOuter;
 		}
@@ -509,6 +534,8 @@ bool FFigmaWidgetBuilder::Build(const FFigmaNode& Root)
 		UPanelWidget* UserRoot = Cast<UPanelWidget>(CurrentRoot);
 		if (UserRoot && UserRoot->CanAddMoreChildren())
 		{
+			ModifyForReparent(RootOuter);
+			UserRoot->Modify();
 			UserRoot->AddChild(RootOuter);
 			Context.Log->Info(TEXT("The root widget was replaced by hand, so the Figma screen was added inside it."));
 		}
@@ -518,7 +545,7 @@ bool FFigmaWidgetBuilder::Build(const FFigmaNode& Root)
 		}
 	}
 
-	HandleRemovedNodes();
+	HandleRemovedNodes(CurrentIds);
 	DeletePending();
 	SyncVariableGuids();
 
@@ -597,6 +624,12 @@ UWidget* FFigmaWidgetBuilder::BuildNode(const FFigmaNode& Node, const FParentInf
 		{
 			RetireHelper(Record, Role);
 		}
+		for (int32 SpacerIndex = 1; Record.Helpers.Contains(FigmaRoles::Spacer(SpacerIndex)); ++SpacerIndex)
+		{
+			RetireHelper(Record, FigmaRoles::Spacer(SpacerIndex));
+		}
+		// Anything that used to be built under this layer is now part of it (an image, a component...).
+		ChildlessIds.Add(Node.Id);
 		if (Plan.Kind == EFigmaWidgetKind::Image && !Locks.bAppearance)
 		{
 			ConfigureImage(Named, Node);
@@ -627,11 +660,11 @@ UWidget* FFigmaWidgetBuilder::BuildNode(const FFigmaNode& Node, const FParentInf
 	{
 		UWidget* SizeBox = EnsureHelper(Record, FigmaRoles::Size(), Named->GetName() + TEXT("_Size"), USizeBox::StaticClass());
 		SetSingleContent(Cast<UPanelWidget>(SizeBox), Named);
-		if (!Locks.bLayout)
+		if (SizeBox && !Locks.bLayout)
 		{
 			ConfigureSizeBox(SizeBox, Node, Plan);
 		}
-		Outer = SizeBox;
+		Outer = SizeBox ? SizeBox : Named;
 	}
 	else
 	{
@@ -837,6 +870,7 @@ UWidget* FFigmaWidgetBuilder::EnsureNamedWidget(const FFigmaNode& Node, FFigmaSy
 			MarkForDelete(Existing);
 			RenameWidget(OldLayout, OldName);
 			Record.Helpers.Remove(FigmaRoles::Layout());
+			ModifyForReparent(OldLayout);
 			OldLayout->RemoveFromParent();
 			ReservedNames.Add(OldName);
 			return OldLayout;
@@ -890,6 +924,11 @@ UWidget* FFigmaWidgetBuilder::EnsureHelper(FFigmaSyncNodeRecord& Record, FName R
 		return Existing;
 	}
 
+	if (Existing)
+	{
+		// Same role, different class: free the name first so the new helper gets it (not "_Layout_2" forever).
+		RenameWidget(Existing, ClaimName(OldName.ToString() + TEXT("_Replaced")));
+	}
 	UWidget* Created = ConstructWidgetOfClass(Class, ClaimName(DesiredName));
 	if (!Created)
 	{
@@ -911,6 +950,7 @@ UWidget* FFigmaWidgetBuilder::EnsureHelper(FFigmaSyncNodeRecord& Record, FName R
 				{
 					break;
 				}
+				ModifyForReparent(Child);
 				NewPanel->AddChild(Child);
 			}
 		}
@@ -946,6 +986,8 @@ void FFigmaWidgetBuilder::TransferLeftovers(const FFigmaNode& Node, UPanelWidget
 	{
 		if (Child && !IsKnownManaged(Child->GetFName()) && Target->CanAddMoreChildren())
 		{
+			ModifyForReparent(Child);
+			Target->Modify();
 			Target->AddChild(Child);
 			Context.Log->Info(FString::Printf(TEXT("Moved hand-added widget '%s' into the new %s."), *Child->GetName(), *ClassDisplayName(Target->GetClass())), &Node);
 		}
@@ -966,6 +1008,8 @@ void FFigmaWidgetBuilder::SetSingleContent(UPanelWidget* Container, UWidget* Chi
 	{
 		if (Child && Child->GetParent() != Container)
 		{
+			ModifyForReparent(Child);
+			Container->Modify();
 			Container->AddChild(Child);
 		}
 		return;
@@ -976,6 +1020,8 @@ void FFigmaWidgetBuilder::SetSingleContent(UPanelWidget* Container, UWidget* Chi
 	{
 		return;
 	}
+	ModifyForReparent(Child);
+	ModifyForReparent(Current);
 	ContentWidget->Modify();
 	ContentWidget->SetContent(Child);
 
@@ -1003,6 +1049,8 @@ void FFigmaWidgetBuilder::PlaceChild(UPanelWidget* Panel, UWidget* Child, int32 
 	}
 	if (Child->GetParent() != Panel)
 	{
+		ModifyForReparent(Child);
+		Panel->Modify();
 		Panel->AddChild(Child);
 	}
 	const int32 Current = Panel->GetChildIndex(Child);
@@ -1268,6 +1316,14 @@ void FFigmaWidgetBuilder::BuildChildren(const FFigmaNode& Node, FFigmaSyncNodeRe
 {
 	if (Locks.bChildren)
 	{
+		// Their records are carried over untouched (see HandleRemovedNodes), so nothing under here looks deleted.
+		for (const TSharedPtr<FFigmaNode>& Child : Node.Children)
+		{
+			if (Child.IsValid())
+			{
+				CollectIds(*Child, LockedIds);
+			}
+		}
 		Context.Log->Info(TEXT("Children are locked; they were not synced."), &Node);
 		return;
 	}
@@ -1337,7 +1393,8 @@ void FFigmaWidgetBuilder::BuildChildren(const FFigmaNode& Node, FFigmaSyncNodeRe
 		if (bSpaceBetween && Desired.Num() > 0)
 		{
 			++SpacerCount;
-			UWidget* Spacer = EnsureHelper(Record, FigmaRoles::Spacer(SpacerCount), Node.CleanName + FString::Printf(TEXT("_Spacer%d"), SpacerCount), USpacer::StaticClass());
+			const FString SpacerBase = Record.Widget.IsNone() ? Node.CleanName : Record.Widget.ToString();
+			UWidget* Spacer = EnsureHelper(Record, FigmaRoles::Spacer(SpacerCount), SpacerBase + FString::Printf(TEXT("_Spacer%d"), SpacerCount), USpacer::StaticClass());
 			if (Spacer)
 			{
 				Desired.Add(Spacer);
@@ -1701,7 +1758,7 @@ FName FFigmaWidgetBuilder::GetTexturePreset(const FFigmaNode& Node) const
 	return FFigmaTextureImporter::GetPresetForNode(Node, Context.Preset);
 }
 
-FSlateBrush FFigmaWidgetBuilder::MakeNodeBackgroundBrush(const FFigmaNode& Node, FFigmaImportContext& Context, const FString& TextureFolder, bool* bOutOverflowClipped)
+FSlateBrush FFigmaWidgetBuilder::MakeNodeBackgroundBrush(const FFigmaNode& Node, FFigmaImportContext& InContext, const FString& TextureFolder, bool* bOutOverflowClipped)
 {
 	if (bOutOverflowClipped)
 	{
@@ -1709,8 +1766,8 @@ FSlateBrush FFigmaWidgetBuilder::MakeNodeBackgroundBrush(const FFigmaNode& Node,
 	}
 	if (Node.Background.IsSet())
 	{
-		const FFigmaAsset* Asset = Context.Document.FindAsset(Node.Background.AssetId);
-		UTexture2D* Texture = Asset ? Context.Textures->GetOrImport(*Asset, FFigmaTextureImporter::GetPresetForNode(Node, Context.Preset), TextureFolder) : nullptr;
+		const FFigmaAsset* Asset = InContext.Document.FindAsset(Node.Background.AssetId);
+		UTexture2D* Texture = Asset ? InContext.Textures->GetOrImport(*Asset, FFigmaTextureImporter::GetPresetForNode(Node, InContext.Preset), TextureFolder) : nullptr;
 		if (Texture)
 		{
 			if (bOutOverflowClipped)
@@ -1723,7 +1780,7 @@ FSlateBrush FFigmaWidgetBuilder::MakeNodeBackgroundBrush(const FFigmaNode& Node,
 	}
 	if (Node.bHasStyle)
 	{
-		return FFigmaStyleConverter::MakeShapeBrush(Node, Context.Preset);
+		return FFigmaStyleConverter::MakeShapeBrush(Node, InContext.Preset);
 	}
 	FSlateBrush None;
 	None.DrawAs = ESlateBrushDrawType::NoDrawType;
@@ -1770,9 +1827,9 @@ FButtonStyle FFigmaWidgetBuilder::MakeButtonStyle(const FFigmaNode& Node, const 
 	{
 		const FString StateProperty = FFigmaButtonStates::FindStateProperty(*Set);
 		const FString Group = FFigmaButtonStates::GroupKey(Node.Component.Variant, StateProperty);
-		auto FromVariant = [&](EFigmaButtonState State, FSlateBrush& OutBrush)
+		auto FromVariant = [&](EFigmaButtonState ButtonState, FSlateBrush& OutBrush)
 		{
-			const FFigmaVariant* Variant = FFigmaButtonStates::FindVariant(*Set, StateProperty, Group, State);
+			const FFigmaVariant* Variant = FFigmaButtonStates::FindVariant(*Set, StateProperty, Group, ButtonState);
 			if (Variant && Variant->Node.IsValid())
 			{
 				bool bVariantClipped = false;
@@ -2020,7 +2077,31 @@ void FFigmaWidgetBuilder::ApplyCommon(UWidget* Outer, UWidget* Named, const FFig
 // ----------------------------------------------------------------------------------------------------------------
 // Removal and cleanup
 
-void FFigmaWidgetBuilder::HandleRemovedNodes()
+bool FFigmaWidgetBuilder::IsAbsorbed(const FString& NodeId, const TSet<FString>& FigmaIds) const
+{
+	// Still in the design but not built: its parent is now a single widget (a component leaf).
+	if (FigmaIds.Contains(NodeId))
+	{
+		return true;
+	}
+	// Gone from the bundle because an ancestor is now rasterized ([img] exports no children).
+	const FFigmaSyncNodeRecord* Record = State ? State->Nodes.Find(NodeId) : nullptr;
+	for (int32 Guard = 0; Record && !Record->ParentId.IsEmpty() && Guard < 1024; ++Guard)
+	{
+		if (ChildlessIds.Contains(Record->ParentId))
+		{
+			return true;
+		}
+		if (NewRecords.Contains(Record->ParentId))
+		{
+			return false; // The parent was rebuilt with its children: this layer really was deleted.
+		}
+		Record = State->Nodes.Find(Record->ParentId);
+	}
+	return false;
+}
+
+void FFigmaWidgetBuilder::HandleRemovedNodes(const TSet<FString>& FigmaIds)
 {
 	if (!State)
 	{
@@ -2032,10 +2113,26 @@ void FFigmaWidgetBuilder::HandleRemovedNodes()
 		{
 			continue;
 		}
+		if (LockedIds.Contains(Pair.Key))
+		{
+			NewRecords.Add(Pair.Key, Pair.Value); // Under a children lock: left exactly as it was.
+			continue;
+		}
 		const FFigmaSyncNodeRecord& Old = Pair.Value;
 		UWidget* Widget = FindWidgetByName(Old.Widget);
 		if (!Widget || PendingDelete.Contains(Widget))
 		{
+			continue;
+		}
+		if (IsAbsorbed(Pair.Key, FigmaIds))
+		{
+			MarkForDelete(Widget);
+			for (const TPair<FName, FName>& Helper : Old.Helpers)
+			{
+				MarkForDelete(FindWidgetByName(Helper.Value));
+			}
+			Context.Log->AddForPath(EFigmaLogSeverity::Info, EFigmaLogCategory::Import,
+				FString::Printf(TEXT("Layer is now drawn by its parent (an image or component); widget '%s' was removed."), *Old.Widget.ToString()), Pair.Key, Old.LayerName);
 			continue;
 		}
 		if (Context.Settings.bKeepRemovedWidgets)
@@ -2111,16 +2208,14 @@ void FFigmaWidgetBuilder::DeletePending()
 			}
 			if (bHasSurvivors)
 			{
+				// It stays, so its doomed parents must stay too (removing them would orphan it).
+				Doomed.Remove(Widget);
 				Context.Log->Warning(FString::Printf(TEXT("Kept '%s' because it still holds widgets added by hand. Move them out and delete it."), *Widget->GetName()));
 				continue;
 			}
 		}
 		const FName Name = Widget->GetFName();
-		Widget->Modify();
-		if (Widget->Slot)
-		{
-			Widget->Slot->Modify();
-		}
+		ModifyForReparent(Widget);
 		Tree->RemoveWidget(Widget);
 		Widget->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
 		NamesFreed.Add(Name);

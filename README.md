@@ -151,3 +151,5 @@ UnrealEditor-Cmd YourProject.uproject -ExecCmds="Automation RunTests FigmaSync; 
 - Live push uses `http://localhost:7820`. Figma only allows localhost for development plugins (`devAllowedDomains`), and
   newer Chromium builds may ask once for **local network access**; allow it. If you change the port in Project Settings,
   change it in `figma-plugin/manifest.json` too.
+- While Live Push is on, the editor accepts bundles on that port from any app or page that can reach it, and a push
+  can re-sync a bound Widget Blueprint. It's off by default; turn it on while you iterate on a screen.

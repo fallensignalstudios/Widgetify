@@ -14,6 +14,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include <type_traits>
 
 namespace
 {
@@ -26,6 +27,13 @@ namespace
 #else
 		return FHttpRequestHandler::CreateLambda(Forward<LambdaType>(Lambda));
 #endif
+	}
+
+	/** The route's verb plus OPTIONS. Older routers key routes by path only, so preflights share the route. */
+	EHttpServerRequestVerbs WithPreflight(EHttpServerRequestVerbs Verb)
+	{
+		using FVerbBits = std::underlying_type_t<EHttpServerRequestVerbs>;
+		return static_cast<EHttpServerRequestVerbs>(static_cast<FVerbBits>(Verb) | static_cast<FVerbBits>(EHttpServerRequestVerbs::VERB_OPTIONS));
 	}
 
 	FString JsonEscape(const FString& In)
@@ -62,17 +70,20 @@ bool FFigmaLiveServer::Start(uint32 InPort, FString& OutError)
 		{
 			Routes.Add(Handle);
 		}
+		else
+		{
+			UE_LOG(LogFigmaSync, Warning, TEXT("Live push: could not bind %s"), Path);
+		}
 	};
-	Bind(TEXT("/figmasync/ping"), EHttpServerRequestVerbs::VERB_GET, &FFigmaLiveServer::HandlePing);
-	Bind(TEXT("/figmasync/push"), EHttpServerRequestVerbs::VERB_POST, &FFigmaLiveServer::HandlePush);
-	// Browsers preflight cross-origin requests from the plugin iframe (origin "null"); the server has no CORS of its own.
-	Bind(TEXT("/figmasync/ping"), EHttpServerRequestVerbs::VERB_OPTIONS, &FFigmaLiveServer::HandlePreflight);
-	Bind(TEXT("/figmasync/push"), EHttpServerRequestVerbs::VERB_OPTIONS, &FFigmaLiveServer::HandlePreflight);
+	// Browsers preflight cross-origin requests from the plugin iframe (origin "null") and the server has no CORS of
+	// its own, so each route also answers OPTIONS (see HandlePreflight).
+	Bind(TEXT("/figmasync/ping"), WithPreflight(EHttpServerRequestVerbs::VERB_GET), &FFigmaLiveServer::HandlePing);
+	Bind(TEXT("/figmasync/push"), WithPreflight(EHttpServerRequestVerbs::VERB_POST), &FFigmaLiveServer::HandlePush);
 
-	if (Routes.Num() == 0)
+	if (Routes.Num() != 2)
 	{
 		OutError = TEXT("Could not register the /figmasync routes (already used by another plugin?).");
-		Router.Reset();
+		Stop();
 		return false;
 	}
 	FHttpServerModule::Get().StartAllListeners();
@@ -120,6 +131,10 @@ TUniquePtr<FHttpServerResponse> FFigmaLiveServer::JsonResponse(bool bOk, const F
 
 bool FFigmaLiveServer::HandlePing(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
+	if (Request.Verb == EHttpServerRequestVerbs::VERB_OPTIONS)
+	{
+		return HandlePreflight(Request, OnComplete);
+	}
 	const FString Body = FString::Printf(TEXT("{\"ok\":true,\"name\":\"Widgetify\",\"version\":\"0.1.0\",\"project\":\"%s\",\"engine\":\"%d.%d\"}"),
 		*JsonEscape(FApp::GetProjectName()), ENGINE_MAJOR_VERSION, ENGINE_MINOR_VERSION);
 	TUniquePtr<FHttpServerResponse> Response = FHttpServerResponse::Create(Body, FString(TEXT("application/json")));
@@ -138,11 +153,10 @@ bool FFigmaLiveServer::HandlePreflight(const FHttpServerRequest& Request, const 
 
 bool FFigmaLiveServer::HandlePush(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 {
-	const FString* FrameParam = Request.QueryParams.Find(TEXT("frame"));
-	const FString* IdParam = Request.QueryParams.Find(TEXT("id"));
-	const FString FrameName = FrameParam && !FrameParam->IsEmpty() ? *FrameParam : FString(TEXT("Pushed"));
-	const FString FrameId = IdParam ? *IdParam : FString();
-
+	if (Request.Verb == EHttpServerRequestVerbs::VERB_OPTIONS)
+	{
+		return HandlePreflight(Request, OnComplete);
+	}
 	if (Request.Body.Num() == 0)
 	{
 		OnComplete(JsonResponse(false, TEXT("Empty request: send the bundle zip as the body."), 400));
@@ -152,11 +166,16 @@ bool FFigmaLiveServer::HandlePush(const FHttpServerRequest& Request, const FHttp
 	// Validate before saving so a bad push never replaces a good bundle on disk.
 	FString Error;
 	TArray<uint8> Copy = Request.Body;
-	if (!FFigmaBundle::OpenFromZipBytes(MoveTemp(Copy), FrameName, Error).IsValid())
+	const TSharedPtr<FFigmaBundle> Pushed = FFigmaBundle::OpenFromZipBytes(MoveTemp(Copy), TEXT("Live push"), Error);
+	if (!Pushed.IsValid())
 	{
 		OnComplete(JsonResponse(false, FString::Printf(TEXT("Not a valid bundle: %s"), *Error), 400));
 		return true;
 	}
+	// The frame comes from the bundle itself: query parameters may arrive percent-encoded (Figma ids contain ':').
+	const FFigmaDocument& PushedDocument = Pushed->GetDocument();
+	const FString FrameName = PushedDocument.FrameName.IsEmpty() ? FString(TEXT("Pushed")) : PushedDocument.FrameName;
+	const FString FrameId = PushedDocument.FrameId;
 
 	const FString InboxDir = FPaths::ProjectSavedDir() / TEXT("FigmaSync") / TEXT("Inbox");
 	IFileManager::Get().MakeDirectory(*InboxDir, true);

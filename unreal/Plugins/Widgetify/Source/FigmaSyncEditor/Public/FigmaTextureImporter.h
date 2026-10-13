@@ -32,4 +32,6 @@ private:
 
 	FFigmaImportContext& Context;
 	TMap<FString, TWeakObjectPtr<UTexture2D>> Cache;
+	/** "Folder/AssetName" -> id of the bundle asset that uses it in this import. */
+	TMap<FString, FString> ClaimedNames;
 };

@@ -1,5 +1,6 @@
 #include "FigmaSyncEditorModule.h"
 #include "ContentBrowserMenuContexts.h"
+#include "CoreGlobals.h"
 #include "FigmaBundle.h"
 #include "FigmaImporter.h"
 #include "FigmaLiveServer.h"
@@ -192,7 +193,7 @@ private:
 		// Tools > Figma Sync
 		if (UToolMenu* ToolsMenu = UToolMenus::Get()->ExtendMenu(TEXT("LevelEditor.MainMenu.Tools")))
 		{
-			FToolMenuSection& Section = ToolsMenu->FindOrAddSection(TEXT("Widgetify"), LOCTEXT("ToolsSection", "Widgetify"));
+			FToolMenuSection& Section = ToolsMenu->AddSection(TEXT("Widgetify"), LOCTEXT("ToolsSection", "Widgetify"));
 			Section.AddMenuEntry(TEXT("OpenFigmaSync"), LOCTEXT("OpenPanel", "Figma Sync"),
 				LOCTEXT("OpenPanelTip", "Import Figma frames as Widget Blueprints and keep them in sync."), PluginIcon(),
 				FUIAction(FExecuteAction::CreateLambda([this]() { OpenPanel(FString(), nullptr); })));
@@ -272,7 +273,8 @@ private:
 	{
 		const UFigmaSyncSettings& Settings = UFigmaSyncSettings::Get();
 		const uint32 WantedPort = static_cast<uint32>(Settings.LivePushPort);
-		if (!Settings.bEnableLivePush)
+		// Commandlets (cooking, automation) load editor modules too; they must not grab the port.
+		if (!Settings.bEnableLivePush || IsRunningCommandlet())
 		{
 			if (LiveServer.IsValid())
 			{

@@ -19,15 +19,17 @@ public class FigmaSyncEditor : ModuleRules
 			"Slate",
 			"UMG",
 			"UMGEditor",
+			// Public headers include FigmaSyncBlueprintExtension.h (a UWidgetBlueprintExtension), whose engine
+			// headers pull in UnrealEd and the Kismet compiler.
+			"UnrealEd",
+			"KismetCompiler",
+			"BlueprintGraph",
 			"FigmaSyncCore",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
-			"UnrealEd",
 			"Kismet",
-			"KismetCompiler",
-			"BlueprintGraph",
 			"InputCore",
 			"AssetTools",
 			"AssetRegistry",

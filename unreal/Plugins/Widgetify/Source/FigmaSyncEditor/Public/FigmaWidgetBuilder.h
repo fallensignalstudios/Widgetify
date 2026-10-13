@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "FigmaDocument.h"
+#include "FigmaSyncBlueprintExtension.h" // NewRecords holds FFigmaSyncNodeRecord by value: it must be complete here.
 #include "Layout/Margin.h"
 #include "Types/SlateEnums.h"
 #include "UObject/WeakObjectPtrTemplates.h"
@@ -16,8 +17,6 @@ class UWidget;
 class UWidgetBlueprint;
 class UWidgetTree;
 struct FButtonStyle;
-struct FFigmaSyncLockRule;
-struct FFigmaSyncNodeRecord;
 struct FSlateBrush;
 
 /** How a Figma node turns into widgets. */
@@ -65,16 +64,16 @@ public:
 	bool Build(const FFigmaNode& Root);
 
 	/** What a node becomes, e.g. "Border + VerticalBox", for the preview tree. */
-	static FString Describe(const FFigmaNode& Node, FFigmaImportContext& Context);
+	static FString Describe(const FFigmaNode& Node, FFigmaImportContext& InContext);
 
 	/** Kind of widget for a node; OutLeafClass/OutMapper are set for mapper-chosen leaves. */
-	static EFigmaWidgetKind Classify(const FFigmaNode& Node, FFigmaImportContext& Context, UClass** OutLeafClass = nullptr, IFigmaWidgetMapper** OutMapper = nullptr);
+	static EFigmaWidgetKind Classify(const FFigmaNode& Node, FFigmaImportContext& InContext, UClass** OutLeafClass = nullptr, IFigmaWidgetMapper** OutMapper = nullptr);
 
 	/** Panel class for a container's children (Canvas, HorizontalBox, VerticalBox, WrapBox, Overlay). */
 	static UClass* GetPanelClass(const FFigmaNode& Node);
 
 	/** Background brush for a node: its rasterized background PNG when one was exported, else its rounded-box brush. */
-	static FSlateBrush MakeNodeBackgroundBrush(const FFigmaNode& Node, FFigmaImportContext& Context, const FString& TextureFolder, bool* bOutOverflowClipped = nullptr);
+	static FSlateBrush MakeNodeBackgroundBrush(const FFigmaNode& Node, FFigmaImportContext& InContext, const FString& TextureFolder, bool* bOutOverflowClipped = nullptr);
 
 private:
 	enum class EParentKind : uint8 { Root, Canvas, HBox, VBox, Wrap, Overlay, Content };
@@ -157,7 +156,10 @@ private:
 	void RenameWidget(UWidget* Widget, FName NewName);
 	void MarkForDelete(UWidget* Widget);
 	void DeletePending();
-	void HandleRemovedNodes();
+	/** FigmaIds: every node id in the bundle (built or not). */
+	void HandleRemovedNodes(const TSet<FString>& FigmaIds);
+	/** True when a layer wasn't built because its parent became a single widget (image, component leaf). */
+	bool IsAbsorbed(const FString& NodeId, const TSet<FString>& FigmaIds) const;
 	void SyncVariableGuids();
 	bool IsKnownManaged(FName Name) const;
 
@@ -178,6 +180,10 @@ private:
 	TSet<FName> NamesFreed;
 	TSet<FName> RemovedNames;
 	TArray<TWeakObjectPtr<UWidget>> PendingDelete;
+	/** Nodes under a children lock: not built, their records carried over as they were. */
+	TSet<FString> LockedIds;
+	/** Nodes built as a single widget (image, shape, text, leaf): nothing is built under them. */
+	TSet<FString> ChildlessIds;
 	/** Named widgets replaced because their class changed, keyed by node id; leftover hand-added children move to the new panel. */
 	TMap<FString, TWeakObjectPtr<UWidget>> ReplacedWidgets;
 };

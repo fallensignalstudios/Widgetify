@@ -63,22 +63,22 @@ void FFigmaImportLog::AddForPath(EFigmaLogSeverity Severity, EFigmaLogCategory C
 
 int32 FFigmaImportLog::Count(EFigmaLogSeverity Severity) const
 {
-	int32 Count = 0;
+	int32 Total = 0;
 	for (const TSharedPtr<FFigmaLogEntry>& Entry : Entries)
 	{
-		Count += Entry->Severity == Severity ? 1 : 0;
+		Total += Entry->Severity == Severity ? 1 : 0;
 	}
-	return Count;
+	return Total;
 }
 
 int32 FFigmaImportLog::Count(EFigmaLogCategory Category) const
 {
-	int32 Count = 0;
+	int32 Total = 0;
 	for (const TSharedPtr<FFigmaLogEntry>& Entry : Entries)
 	{
-		Count += Entry->Category == Category ? 1 : 0;
+		Total += Entry->Category == Category ? 1 : 0;
 	}
-	return Count;
+	return Total;
 }
 
 void FFigmaImportLog::Reset()

@@ -10,10 +10,11 @@ struct FHttpServerRequest;
 struct FHttpServerResponse;
 
 /**
- * Local HTTP endpoint for the Figma plugin's "Push to Unreal" button (bound to localhost only).
+ * Local HTTP endpoint for the Figma plugin's "Push to Unreal" button. Off by default (Project Settings > Live Push).
  *
  *   GET  /figmasync/ping   -> {"ok":true,"project":"...","engine":"5.x"}
- *   POST /figmasync/push   -> body = bundle zip; ?frame=<name>&id=<figma frame id>
+ *   POST /figmasync/push   -> body = bundle zip (the frame name and id are read from the bundle)
+ *   OPTIONS on both        -> CORS / private-network preflight
  *
  * Pushed bundles are saved to Saved/FigmaSync/Inbox and handed to OnBundleReceived on the next editor tick.
  */

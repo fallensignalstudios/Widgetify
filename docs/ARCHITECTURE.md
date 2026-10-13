@@ -173,8 +173,10 @@ Studios can register their own mapper, for example to use project-specific butto
 `FFigmaLiveServer` uses the engine's HttpServer module on `localhost:<LivePushPort>` (default 7820):
 
 - `GET /figmasync/ping`: the plugin uses it to show "Unreal is listening".
-- `POST /figmasync/push?frame=<name>&id=<frameId>`: the body is the bundle zip.
-- `OPTIONS` handlers and CORS headers on both routes, because the plugin UI runs on a `null`/figma.com origin.
+- `POST /figmasync/push`: the body is the bundle zip. The frame name and id are read from the bundle itself, not from
+  the query string.
+- Both routes also answer `OPTIONS` (CORS and private-network preflights), because the plugin UI runs on a `null`
+  origin. Each path is bound once with a verb mask, since older HttpServer routers key routes by path alone.
 
 Pushes are saved to `Saved/FigmaSync/Inbox` and handled one per editor tick, on the game thread. If the frame id is
 bound to a Widget Blueprint (the binding is made the first time you import that frame) and *Auto Apply Pushes* is on,
