@@ -1,0 +1,34 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1.0",
+	"FriendlyName": "Widgetify (Figma to UMG Sync)",
+	"Description": "Design a menu in Figma, press one button in Unreal, and get a ready-to-edit Widget Blueprint with textures, fonts and CommonUI hooks wired. Editor-only: nothing ships in your game.",
+	"Category": "UI",
+	"CreatedBy": "Fallen Signal Studios",
+	"CreatedByURL": "",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "FigmaSyncCore",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "FigmaSyncEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "FigmaSyncCommonUI",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault"
+		}
+	]
+}
